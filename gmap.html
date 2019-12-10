@@ -1,0 +1,380 @@
+<html>
+  <head>
+	<meta name="viewport" content="initial-scale=1.0, user-scalable=no" charset="utf-8"/>
+	<script src="http://apps.bdimg.com/libs/jquery/2.1.4/jquery.min.js"></script>
+	<!-- 最新版本的 Bootstrap 核心 CSS 文件 -->
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.3.7/dist/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+	<!-- 最新的 Bootstrap 核心 JavaScript 文件 -->
+	<script src="https://cdn.jsdelivr.net/npm/bootstrap@3.3.7/dist/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>
+	<script type="text/javascript" src="http://api.map.baidu.com/api?v=2.0&ak=HTVoFC4GQ3B9sxSs0l9skZ2YGVYuxrkB"></script> 
+    <style type="text/css">
+      html { height: 90% }
+      body { height: 100%; margin: 0; padding: 0 }
+      #map_canvas { height: 100% }
+
+	  #logo {
+		margin-top: 30px;
+	  }
+	  .logo{
+		margin-left: 20px;
+		width: 50%;
+	  }
+
+	  .baidu-maps label {
+		max-width: none !important;
+	  }
+	  .product {
+		  margin-top: 20px;
+		  margin-left: 20px;
+		  margin-bottom: 20px;
+		  font-size: 16px !important;
+	  }
+	.fixed_headers thead tr {
+
+	display: block;
+	position: relative;
+	}
+	.fixed_headers tbody {
+	display: block;
+	overflow: auto;
+	height: 250px;
+	}
+
+	.fixed_headers td:nth-child(1),
+	.fixed_headers th:nth-child(1) {
+	min-width: 230px;
+	text-overflow:ellipsis;
+	white-space:nowrap;
+	overflow:hidden;
+	}
+	.fixed_headers td:nth-child(2),
+	.fixed_headers th:nth-child(2) {
+	min-width: 200px;
+	}
+	.fixed_headers td:nth-child(3),
+	.fixed_headers th:nth-child(3) {
+	min-width: 200px;
+	}
+	.fixed_headers td:nth-child(4),
+	.fixed_headers th:nth-child(4) {
+	min-width: 200px;
+	}
+	.fixed_headers td:nth-child(5),
+	.fixed_headers th:nth-child(5) {
+	min-width: 200px;
+	}
+	.fixed_headers td:nth-child(6),
+	.fixed_headers th:nth-child(6) {
+	min-width: 200px;
+	}
+    </style>
+	<script type="text/javascript">
+		// 设置全局变量
+		baiduMap = null;
+		planeMap = new Map();
+		drawLinePlaneMap = new Map();
+		drawStartMap = new Map();
+		hightPlane = null;
+	</script>
+	<script type="text/javascript">
+		// 初始化，刷新
+		function initialize() {
+			baiduMap = new BMap.Map("container");    
+			baiduMap.centerAndZoom(new BMap.Point(116.404, 39.915), 6);
+			baiduMap.enableScrollWheelZoom(true); 
+
+			var myCity = new BMap.LocalCity();
+			myCity.get(setCenter); 
+	
+			window.setInterval(function() {
+				refresh();
+			}, 2000);
+		}
+
+		function refresh(){
+			$.get("./data.json",function(data){
+				refreshPlaneNums(data.length);
+				
+				genTbody(data);
+				for(var i=0; i<data.length; i++){
+					hex_name = data[i].hex;
+					if(is_empty(hex_name) || is_empty(data[i].lat || is_empty(data[i].lon))){
+						continue;
+					}
+					let plane;
+					if(!planeMap.has(hex_name)) {
+						plane = {
+							'name': hex_name,
+							'marker': null,
+							'data': [],
+							'point_list': [],
+							'line': null,
+							'startPoint': null,
+							'lastTimestamp': null
+						};
+						planeMap.set(hex_name, plane);
+					}
+
+					plane = planeMap.get(hex_name);
+					if(is_last_data(plane, data[i])) {
+						plane['lastTimestamp'] = Date.parse(new Date());
+						continue;
+					}
+
+					plane['data'].push(data[i]);
+					drawPlane(plane)
+				}
+			});
+
+			removePlanes();
+		}
+		function refreshPlaneNums(planeNums) {
+			$('#planeNums').text(planeNums)
+		}
+
+		function removePlanes(){
+			let timestamp = Date.parse(new Date());
+			willDeletePlanes = new Array();
+			for (let [name, plane] of planeMap) {
+				let lastTimestamp = plane['lastTimestamp'];
+				if(lastTimestamp != null && isOutdate(timestamp, lastTimestamp)){
+					willDeletePlanes.push(name);
+					if(hightPlane === plane){
+						removeAllLine();
+					}
+					baiduMap.removeOverlay(plane['marker']);
+				}
+			}
+			for(let name of willDeletePlanes){
+				planeMap.delete(name);
+			}
+		}
+
+		function isOutdate(timestamp, lastTimestamp){
+			return (timestamp - lastTimestamp) >= 10 * 1000;
+		}
+
+	</script>
+	<script>
+		// 画飞机，线条
+		$(function(){ 
+			document.body.addEventListener("dblclick", function(e){
+				removeAllLineAndColor();
+			},false);
+		});
+
+		function removeAllLine() {
+			if(hightPlane != null){
+				let line = hightPlane['line'];
+				let startPoint = hightPlane['startPoint'];
+				if(line != null){
+					baiduMap.removeOverlay(line);
+					hightPlane['line'] = null;
+				}
+				if(startPoint != null) {
+					baiduMap.removeOverlay(startPoint);
+					hightPlane['startPoint'] = null;
+				}
+			}
+		}
+
+		function removeAllLineAndColor() {
+			if (hightPlane === null) {
+				return;
+			}
+			let marker = hightPlane['marker'];
+			let rotation = getRotation(hightPlane);
+			let icon = new BMap.Symbol(BMap_Symbol_SHAPE_PLANE, {
+					scale: 1.5,
+					rotation: rotation,
+					strokeColor: "blue"
+				});
+			marker.setIcon(icon);
+
+			removeAllLine();
+		}
+
+		function drawPlane(plane) {
+			var planeData = plane['data'];
+			var data = planeData[planeData.length - 1]; 
+			var planeHexName = plane['name'];
+			if(plane['marker'] === null) {
+				// var marker = new BMap.Marker();
+				//设置marker图标为飞机
+				let marker = new BMap.Marker();
+				let icon = new BMap.Symbol(BMap_Symbol_SHAPE_PLANE, {
+					scale: 1.5,
+					rotation: 0,
+					strokeColor: "blue"
+				});
+				marker.setIcon(icon);
+				marker.addEventListener("click", function(e){
+					removeAllLineAndColor();
+					drawLine(plane);
+					e.domEvent.stopPropagation();
+					let rotation = getRotation(plane);
+					console.log('-------');
+					console.log(this.getRotation());
+					console.log(rotation);
+					let icon = new BMap.Symbol(BMap_Symbol_SHAPE_PLANE, {
+							scale: 1.5,
+							rotation: rotation,
+							strokeColor: "red"
+						});
+					this.setIcon(icon);
+					hightPlane = plane;
+				}, true);
+
+				plane['marker'] = marker;
+			}
+			let marker = plane['marker'];
+			point = new BMap.Point(data.lon, data.lat);
+			plane['point_list'].push(point);
+			let date=(new Date).toLocaleTimeString();
+			let title = "hex: " + data.hex + "\nflight: " + data.flight + "\nalt: "+ data.altitude + "\nspeed: " + data.speed + "\nlat,lon: " + data.lat + "," + data.lon + "\ntime(on your computer): " + date;
+			marker.setPosition(point);
+			marker.setTitle(title);	
+			if(hightPlane === plane){
+				console.log(getRotation(plane));
+			}
+			var rotation = getRotation(plane);
+			var icon = marker.getIcon();
+			icon.setRotation(rotation);
+
+			if(hightPlane === plane) {
+				removeAllLine();
+				drawLine(plane);
+			}
+
+			baiduMap.addOverlay(marker);
+
+			plane['lastTimestamp'] = Date.parse(new Date());
+		}
+
+		function drawLine(plane) {
+			//设置marker图标为水滴
+			let pointList = plane['point_list'];
+			if(pointList.length > 0 && plane['startPoint'] === null) {
+				let startPoint = pointList[0];
+				let point = new BMap.Point(startPoint.lng,startPoint.lat);
+				let start = new BMap.Marker(point, {
+				// 指定Marker的icon属性为Symbol
+					icon: new BMap.Symbol(BMap_Symbol_SHAPE_POINT, {
+						scale: 1,//图标缩放大小
+						fillColor: "orange",//填充颜色
+						fillOpacity: 0.8//填充透明度
+					})
+				});
+
+				baiduMap.addOverlay(start);
+				plane['startPoint'] = start;
+			}
+			let line = new BMap.Polyline(pointList);
+			line.setStrokeColor('red');
+			line.setStrokeWeight(3);
+			// line.setStrokeOpacity();
+			line.setStrokeStyle('solid');
+
+			baiduMap.addOverlay(line);
+
+			plane['line'] = line;
+		}
+
+		function getRotation(plane) {
+			data = plane['data'];
+			if(data.length > 0){
+				lastData = data[data.length-1];
+				return lastData['track'];
+			} else {
+				return 0;
+			}
+		}
+
+		function getRandomInt(max) {
+			return Math.floor(Math.random() * Math.floor(max));
+		}
+
+		function setCenter(result){
+			var cityName = result.name;
+			// 上线后修改
+			cityName = "成都市"
+			baiduMap.setCenter(cityName);
+		}
+	</script>
+	<script>
+		// 辅助函数
+		function is_empty(v) {
+			return v === "" || !v 
+		}
+
+		// 飞机数据是否和上一次相等
+		function is_last_data(plane, data) {
+			var planeData = plane['data'];
+			if(planeData.length <= 0) {
+				return false;
+			}
+
+			last_data = planeData[planeData.length - 1];
+			return  last_data.altitude === data.altitude && 
+					last_data.speed === data.speed &&
+					last_data.lat === data.lat && 
+					last_data.lon === data.lon &&
+					last_data.flight === data.flight
+		}
+	</script>
+	<script>
+		// 辅助函数，产生 dom 
+		function genTbody(dataList) {
+			let tbodyHtml = "";
+			for(let data of dataList){
+				tbody = '<tr>'+
+						'<td>'+data.flight+'</td>'+
+						'<td>'+data.altitude+'</td>'+
+						'<td>'+data.speed+'</td>'+
+						'<td>'+data.lat+'</td>'+
+						'<td>'+data.lon+'</td>'+
+						'<td>'+data.track+'</td>'+
+						'</tr>';
+				tbodyHtml = tbodyHtml + tbody;
+			}
+			$('#infoBody').html(tbodyHtml);
+		}
+	</script>
+  </head>
+  <body onload="initialize()">
+    <div id="container" style="width:100%; height:75%" class ="baidu-maps"></div>
+    <div id="footer">
+		<div class="col-md-3">
+			<div class="logo">
+				<img src="http://tva1.sinaimg.cn/large/007X8olVly1g8oa6d7elrj30lg065my6.jpg" class="img-responsive" id="logo">
+			</div>
+			<div class="product">
+				<h4>ADS-B地面站</h4>
+				<p>产品名称: ADS-B地面站</p>
+				<p>产品型号: FRHX_ADS-B_G_1</p>
+				<p>生产厂家: 北京福瑞航行科技有限公司</p>
+				<p>联系电话: 010-82331181</p>
+			</div>
+		</div>
+		<div class="col-md-9" id="myinfo">
+			<div>
+				<h6 style="font-size: 18px; margin-top: 20px;">统计: 当前共有<code id="planeNums"></code>架飞机.</h6>
+				<table class="table table-striped fixed_headers" style="width: 100%;">
+					<thead>
+						<tr>
+						<th>航班号</th>
+						<th>高度</th>
+						<th>速度</th>
+						<th>维度</th>
+						<th>经度</th>
+						<th>航向</th>
+						</tr>
+					</thead>
+					<tbody id="infoBody">
+					</tbody>
+				</table>
+			</div>
+		</div>
+    </div>
+  </body>
+</html>
